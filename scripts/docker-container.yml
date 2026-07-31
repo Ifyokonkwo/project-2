@@ -1,0 +1,56 @@
+---
+- name: Deploy container from Nexus Docker registry
+  hosts: all
+  gather_facts: no
+  
+  vars:
+    nexus_docker_registry: "https://nexus.ifeanyi-okonkwo-05-training.com/repository/docker-repo"  # e.g., "nexus.example.com:8083"
+    nexus_username: "admin"          # Replace with Nexus username
+    nexus_password: "admin123" 
+    image_name: "petclinic"  # e.g., "myapp"
+    image_tag: "1.0.0"  # or specific version
+    container_name: "petclinic-container"
+    nexus_docker_host: "nexus.ifeanyi-okonkwo-05-training.com/docker-repo"
+    container_ports:
+      - "8080:8080"  # host:container port mapping
+    
+  tasks:
+    - name: Login to Nexus Docker registry
+      community.docker.docker_login:
+        registry_url: "{{ nexus_docker_registry }}"
+        username: "{{ nexus_username }}"
+        password: "{{ nexus_password }}"
+        reauthorize: yes
+        
+    - name: Stop existing container if running
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: stopped
+      ignore_errors: yes
+      
+    - name: Remove stopped container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: absent
+      ignore_errors: yes
+      
+    - name: Remove existing image
+      community.docker.docker_image:
+        name: "{{ nexus_docker_host }}/{{ image_name }}:{{ image_tag }}"
+        state: absent
+      ignore_errors: yes
+      
+    - name: Pull new image from Nexus
+      community.docker.docker_image:
+        name: "{{ nexus_docker_host }}/{{ image_name }}:{{ image_tag }}"
+        source: pull
+        force_source: yes
+        
+    - name: Create and start new container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        image: "{{ nexus_docker_host }}/{{ image_name }}:{{ image_tag }}"
+        state: started
+        restart_policy: unless-stopped
+        ports: "{{ container_ports | default(omit) }}"
+        detach: yes
