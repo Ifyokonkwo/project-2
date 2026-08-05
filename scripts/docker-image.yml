@@ -1,0 +1,100 @@
+---
+- name: Pull artifact from Nexus, build Docker image, and push to Nexus registry
+  hosts: localhost
+  gather_facts: no
+  vars:
+    nexus_url: "https://nexus.ifeanyi-okonkwo-05-training.com"  # Replace with your Nexus URL
+    nexus_repository: "maven-repo"       # Replace with your repository name
+    artifact_path: "/Petclinic/spring-petclinic/1.0/spring-petclinic-1.0.war"  # Replace with artifact path
+    artifact_filename: "spring-petclinic-1.0.war"           # Replace with desired filename
+    nexus_docker_registry: "https://nexus.ifeanyi-okonkwo-05-training.com/repository/docker-repo"  # Replace with your Docker registry
+    nexus_docker_host: "nexus.ifeanyi-okonkwo-05-training.com/docker-repo"
+    nexus_username: "admin"          # Replace with Nexus username
+    nexus_password: "admin123"          # Replace with Nexus password (use vault in production)
+    image_name: "petclinic"                      # Replace with your image name
+    image_tag: "1.0.0"                       # Replace with your image tag
+    scripts_dir: "/opt/scripts"
+
+  tasks:
+    # Task 1: Ensure the scripts directory exists
+    - name: Create /opt/scripts directory if it doesn't exist
+      ansible.builtin.file:
+        path: "{{ scripts_dir }}"
+        state: directory
+        mode: '0755'
+
+    # Task 2: Pull artifact from Nexus repository using get_url
+    - name: Download artifact from Nexus repository
+      ansible.builtin.get_url:
+        url: "{{ nexus_url }}/repository/{{ nexus_repository }}{{ artifact_path }}"
+        dest: "{{ scripts_dir }}/{{ artifact_filename }}"
+        url_username: "{{ nexus_username }}"
+        url_password: "{{ nexus_password }}"
+        mode: '0644'
+        force: yes
+      register: download_result
+
+    - name: Display download result
+      ansible.builtin.debug:
+        msg: "Artifact downloaded successfully to {{ scripts_dir }}/{{ artifact_filename }}"
+      when: download_result.changed
+
+    # Task 4: Build Docker image using community.docker module
+    - name: Build Docker image
+      community.docker.docker_image:
+        name: "{{ image_name }}"
+        tag: "{{ image_tag }}"
+        build:
+          path: "{{ scripts_dir }}"
+          dockerfile: Dockerfile
+        source: build
+        state: present
+
+    # Task 5: Login to self-hosted Nexus Docker registry
+    - name: Login to Nexus Docker registry
+      community.docker.docker_login:
+        registry_url: "{{ nexus_docker_registry }}"
+        username: "{{ nexus_username }}"
+        password: "{{ nexus_password }}"
+        reauthorize: yes
+
+    # Task 6: Tag the Docker image for Nexus registry
+    - name: Tag Docker image for Nexus registry
+      community.docker.docker_image:
+        name: "{{ image_name }}"
+        repository: "{{ nexus_docker_host }}/{{ image_name }}"
+        tag: "{{ image_tag }}"
+        state: present
+        source: local
+
+    # Task 7: Push the Docker image to Nexus registry
+    - name: Push Docker image to Nexus registry
+      community.docker.docker_image:
+        name: "{{ nexus_docker_host }}/{{ image_name }}"
+        tag: "{{ image_tag }}"
+        push: yes
+        source: local
+
+    # Task 8: Remove local Docker images from Ansible server
+    - name: Remove local Docker image with original name
+      community.docker.docker_image:
+        name: "{{ image_name }}"
+        tag: "{{ image_tag }}"
+        state: absent
+        force_tag: yes
+
+    - name: Remove local Docker image with registry tag
+      community.docker.docker_image:
+        name: "{{ nexus_docker_host }}/{{ image_name }}"
+        tag: "{{ image_tag }}"
+        state: absent
+        force_tag: yes
+
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Successfully completed all tasks:
+          1. Downloaded artifact from Nexus: {{ nexus_url }}
+          2. Built Docker image: {{ image_name }}:{{ image_tag }}
+          3. Pushed to registry: {{ nexus_docker_registry }}/{{ image_name }}:{{ image_tag }}
+          4. Cleaned up local images

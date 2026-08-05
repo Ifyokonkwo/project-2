@@ -153,6 +153,15 @@ data "aws_ami" "rhel" {
   }
 }
 
+# s3 bucket
+resource "aws_s3_bucket" "scripts" {
+  bucket = var.scripts_bucket_name
+
+  tags = {
+    Name = var.scripts_bucket_name
+  }
+}
+
 ############################################
 # creating Jenkins Host Security Group
 ############################################
@@ -392,7 +401,7 @@ resource "aws_instance" "ansible" {
 }
 resource "aws_s3_object" "scripts_upload" {
   for_each = fileset("${path.module}/scripts", "*")
-  bucket   = var.scripts_bucket_name
+  bucket   = aws_s3_bucket.scripts.id
   key      = "scripts/${each.value}"
   source   = "${path.module}/scripts/${each.value}"
   etag     = filemd5("${path.module}/scripts/${each.value}")

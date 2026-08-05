@@ -54,4 +54,12 @@ echo "${prod_env_ip_2} ansible_user=ubuntu" >> /etc/ansible/hosts
 chown ubuntu:ubuntu /etc/ansible/hosts
 
 # Install New Relic CLI and set up monitoring
-curl -Ls https://download.newrelic.com/install/newrelic-cli/scripts/install.sh | bash && sudo NEW_RELIC_API_KEY="${new_relic_key}" NEW_RELIC_ACCOUNT_ID="${new_relic_account_id}" NEW_RELIC_REGION=EU /usr/local/bin/newrelic install -y
+# Install the New Relic CLI
+curl -Ls https://download.newrelic.com/install/newrelic-cli/scripts/install.sh | bash || exit 1
+
+# Install the Infrastructure Agent
+sudo env \
+NEW_RELIC_API_KEY="${new_relic_key}" \
+NEW_RELIC_ACCOUNT_ID="${new_relic_account_id}" \
+NEW_RELIC_REGION=US \
+/usr/local/bin/newrelic install -y
