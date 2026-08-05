@@ -17,7 +17,7 @@
 #   - AWS credentials configured (aws configure)
 #   - Proper IAM permissions
 # ============================================================
-
+export AWS_PAGER=""
 set -e
 
 # -----------------------------
@@ -78,17 +78,33 @@ destroy_resources() {
     aws s3 rm "s3://$BUCKET_NAME" \
         --recursive || true
 
-    echo "Deleting all object versions (if versioning enabled)..."
+    echo "Deleting all object versions and delete markers..."
 
-    aws s3api delete-objects \
+# Delete object versions
+aws s3api delete-objects \
+    --bucket "$BUCKET_NAME" \
+    --region "$REGION" \
+    --profile "$PROFILE" \
+    --delete "$(aws s3api list-object-versions \
         --bucket "$BUCKET_NAME" \
         --region "$REGION" \
         --profile "$PROFILE" \
-        --delete "$(aws s3api list-object-versions \
-            --bucket "$BUCKET_NAME" \
-            --output=json \
-            --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}')" \
-        || true
+        --query='{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+        --output=json)" \
+    || true
+
+# Delete delete markers
+aws s3api delete-objects \
+    --bucket "$BUCKET_NAME" \
+    --region "$REGION" \
+    --profile "$PROFILE" \
+    --delete "$(aws s3api list-object-versions \
+        --bucket "$BUCKET_NAME" \
+        --region "$REGION" \
+        --profile "$PROFILE" \
+        --query='{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+        --output=json)" \
+    || true
 
     echo "Deleting S3 bucket: $BUCKET_NAME"
 
