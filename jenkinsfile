@@ -5,13 +5,13 @@ pipeline {
         stage('Checkout') {
             steps {
                 git branch: 'euteam2',
-                url: 'https://github.com/Ifyokonkwo/project-2.git'
+                url: 'https://github.com/CloudHight/application-assessment-repo.git'
             }
         }
         stage('Code Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube') {
-                    sh "mvn sonar:sonar"
+                    sh "mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar"
                 }
             }
         }
