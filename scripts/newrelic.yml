@@ -1,6 +1,6 @@
 common: &default_settings
 
-  license_key: '9E5AD429646CA4D0C49D83EE4F7F67423C2EF9918F212771AC3DC9CE006974A5'
+  license_key: '5c630a90a81abcc20867be075d993b8e6c57NRAL'
   agent_enabled: true
   app_name: 'Petclinic'
   high_security: false
