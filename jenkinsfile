@@ -14,28 +14,28 @@ pipeline {
             script: "curl -s http://169.254.169.254/latest/meta-data/placement/region || echo 'us-east-1'",
             returnStdout: true
         ).trim()
-        
-        // Use the same variable names throughout
-        BASTION_TAG = "Name=${params.PROJECT_NAME}-bastion-server"
-        ANSIBLE_TAG = "Name=${params.PROJECT_NAME}-ansible"
     }
     
     stages {
         stage('Get Dynamic IPs') {
             steps {
                 script {
+                    // Set tag variables here (after params are available)
+                    env.BASTION_TAG = "Name=${params.PROJECT_NAME}-bastion-server"
+                    env.ANSIBLE_TAG = "Name=${params.PROJECT_NAME}-ansible"
+                    
                     echo "Using AWS Region: ${env.AWS_REGION}"
-                    echo "Looking for: ${BASTION_TAG}"
-                    echo "Looking for: ${ANSIBLE_TAG}"
+                    echo "Looking for Bastion tag: ${env.BASTION_TAG}"
+                    echo "Looking for Ansible tag: ${env.ANSIBLE_TAG}"
                     
                     // Fetch bastion public IP
                     env.BASTION_IP = sh(
                         script: """
                             aws ec2 describe-instances \\
-                                --filters "Name=tag:Name,Values=${BASTION_TAG}" "Name=instance-state-name,Values=running" \\
+                                --filters "Name=tag:Name,Values=${env.BASTION_TAG}" "Name=instance-state-name,Values=running" \\
                                 --query 'Reservations[0].Instances[0].PublicIpAddress' \\
                                 --output text \\
-                                --region ${AWS_REGION}
+                                --region ${env.AWS_REGION}
                         """,
                         returnStdout: true
                     ).trim()
@@ -44,13 +44,22 @@ pipeline {
                     env.ANSIBLE_IP = sh(
                         script: """
                             aws ec2 describe-instances \\
-                                --filters "Name=tag:Name,Values=${ANSIBLE_TAG}" "Name=instance-state-name,Values=running" \\
+                                --filters "Name=tag:Name,Values=${env.ANSIBLE_TAG}" "Name=instance-state-name,Values=running" \\
                                 --query 'Reservations[0].Instances[0].PrivateIpAddress' \\
                                 --output text \\
-                                --region ${AWS_REGION}
+                                --region ${env.AWS_REGION}
                         """,
                         returnStdout: true
                     ).trim()
+                    
+                    // Check if IPs were found
+                    if (env.BASTION_IP == 'None' || env.BASTION_IP == '') {
+                        error "❌ Could not find bastion instance with tag ${env.BASTION_TAG}"
+                    }
+                    
+                    if (env.ANSIBLE_IP == 'None' || env.ANSIBLE_IP == '') {
+                        error "❌ Could not find ansible instance with tag ${env.ANSIBLE_TAG}"
+                    }
                     
                     echo "✅ Bastion IP: ${env.BASTION_IP}"
                     echo "✅ Ansible IP: ${env.ANSIBLE_IP}"
@@ -118,9 +127,9 @@ pipeline {
                 sshagent(['ansible-key']) {
                     sh """
                         ssh -t -t -o StrictHostKeyChecking=no \\
-                            -o ProxyJump=ubuntu@${BASTION_IP} \\
+                            -o ProxyJump=ubuntu@${env.BASTION_IP} \\
                             -o ForwardAgent=yes \\
-                            ubuntu@${ANSIBLE_IP} \\
+                            ubuntu@${env.ANSIBLE_IP} \\
                             "ansible-playbook /opt/scripts/docker-image.yml"
                     """
                 }
@@ -132,9 +141,9 @@ pipeline {
                 sshagent(['ansible-key']) {
                     sh """
                         ssh -t -t -o StrictHostKeyChecking=no \\
-                            -o ProxyJump=ubuntu@${BASTION_IP} \\
+                            -o ProxyJump=ubuntu@${env.BASTION_IP} \\
                             -o ForwardAgent=yes \\
-                            ubuntu@${ANSIBLE_IP} \\
+                            ubuntu@${env.ANSIBLE_IP} \\
                             "ansible-playbook /opt/scripts/docker-container.yml --limit stage_env"
                     """
                 }
@@ -168,9 +177,9 @@ pipeline {
                 sshagent(['ansible-key']) {
                     sh """
                         ssh -t -t -o StrictHostKeyChecking=no \\
-                            -o ProxyJump=ubuntu@${BASTION_IP} \\
+                            -o ProxyJump=ubuntu@${env.BASTION_IP} \\
                             -o ForwardAgent=yes \\
-                            ubuntu@${ANSIBLE_IP} \\
+                            ubuntu@${env.ANSIBLE_IP} \\
                             "ansible-playbook /opt/scripts/docker-container.yml --limit prod_env"
                     """
                 }
