@@ -8,23 +8,27 @@ pipeline {
             description: 'Project name (e.g., proj, dev, staging)'
         )
     }
+    
     environment {
         AWS_REGION = sh(
             script: "curl -s http://169.254.169.254/latest/meta-data/placement/region || echo 'us-east-1'",
             returnStdout: true
         ).trim()
         
-        // Dynamically build the server names
-        BASTION_NAME = "Name=${params.PROJECT_NAME}-bastion-server"
-        ANSIBLE_NAME = "Name=${params.PROJECT_NAME}-ansible"
+        // Use the same variable names throughout
+        BASTION_TAG = "Name=${params.PROJECT_NAME}-bastion-server"
+        ANSIBLE_TAG = "Name=${params.PROJECT_NAME}-ansible"
     }
+    
     stages {
         stage('Get Dynamic IPs') {
             steps {
                 script {
                     echo "Using AWS Region: ${env.AWS_REGION}"
+                    echo "Looking for: ${BASTION_TAG}"
+                    echo "Looking for: ${ANSIBLE_TAG}"
                     
-                    // Automatically fetch bastion public IP from AWS
+                    // Fetch bastion public IP
                     env.BASTION_IP = sh(
                         script: """
                             aws ec2 describe-instances \\
@@ -36,7 +40,7 @@ pipeline {
                         returnStdout: true
                     ).trim()
                     
-                    // Automatically fetch ansible private IP from AWS
+                    // Fetch ansible private IP
                     env.ANSIBLE_IP = sh(
                         script: """
                             aws ec2 describe-instances \\
@@ -48,8 +52,8 @@ pipeline {
                         returnStdout: true
                     ).trim()
                     
-                    echo "Bastion IP: ${env.BASTION_IP}"
-                    echo "Ansible IP: ${env.ANSIBLE_IP}"
+                    echo "✅ Bastion IP: ${env.BASTION_IP}"
+                    echo "✅ Ansible IP: ${env.ANSIBLE_IP}"
                 }
             }
         }
@@ -112,13 +116,13 @@ pipeline {
         stage('Build Docker Image on the Ansible Server') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh '''
+                    sh """
                         ssh -t -t -o StrictHostKeyChecking=no \\
                             -o ProxyJump=ubuntu@${BASTION_IP} \\
                             -o ForwardAgent=yes \\
                             ubuntu@${ANSIBLE_IP} \\
                             "ansible-playbook /opt/scripts/docker-image.yml"
-                    '''
+                    """
                 }
             }
         }
@@ -126,13 +130,13 @@ pipeline {
         stage('Deploy to Stage Env') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh '''
+                    sh """
                         ssh -t -t -o StrictHostKeyChecking=no \\
                             -o ProxyJump=ubuntu@${BASTION_IP} \\
                             -o ForwardAgent=yes \\
                             ubuntu@${ANSIBLE_IP} \\
                             "ansible-playbook /opt/scripts/docker-container.yml --limit stage_env"
-                    '''
+                    """
                 }
             }
         }
@@ -140,7 +144,6 @@ pipeline {
         stage('Check Website Availability') {
             steps {
                  sh "sleep 90"
-                 sh "curl -s -o /dev/null -w \"%{http_code}\" https://stage.ifeanyi-okonkwo-05-training.com/"
                 script {
                     def response = sh(script: "curl -s -o /dev/null -w \"%{http_code}\" https://stage.ifeanyi-okonkwo-05-training.com/", returnStdout: true).trim()
                     if (response == "200") {
@@ -163,13 +166,13 @@ pipeline {
         stage('Deploy to Production Env') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh '''
+                    sh """
                         ssh -t -t -o StrictHostKeyChecking=no \\
                             -o ProxyJump=ubuntu@${BASTION_IP} \\
                             -o ForwardAgent=yes \\
                             ubuntu@${ANSIBLE_IP} \\
                             "ansible-playbook /opt/scripts/docker-container.yml --limit prod_env"
-                    '''
+                    """
                 }
             }
         }
