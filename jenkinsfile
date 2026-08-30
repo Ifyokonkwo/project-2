@@ -1,6 +1,14 @@
 pipeline {
     agent any
 
+    parameters {
+        string(
+            name: 'ANSIBLE_PRIVATE_IP',
+            defaultValue: '10.0.1.44',
+            description: 'Private IP address of the Ansible control node'
+        )
+    }
+
     stages {
 
         stage('Checkout') {
@@ -10,16 +18,10 @@ pipeline {
             }
         }
 
-        stage('Get Ansible Server IP') { 
-            steps { 
-                script { 
-                    env.ANSIBLE_PRIVATE_IP = sh( 
-                        script: 'terraform output -raw ansible_private_ip', 
-                        returnStdout: true 
-                    ).trim() 
-                    echo "Ansible Server IP: ${env.ANSIBLE_PRIVATE_IP}" 
-                } 
-            } 
+        stage('Display Ansible Server IP') {
+            steps {
+                echo "Ansible Server IP: ${params.ANSIBLE_PRIVATE_IP}"
+            }
         }
 
         stage('Code Analysis') {
@@ -32,7 +34,7 @@ pipeline {
 
         stage('Sonarqube Quality Gate') {
             steps {
-                timeout(2) {
+                timeout(time: 2, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
@@ -96,7 +98,7 @@ pipeline {
                     sshagent(['ansible-key']) {
                         sh '''
                             ssh -t -t ubuntu@${ANSIBLE_PRIVATE_IP} \
-                            -o strictHostKeyChecking=no \
+                            -o StrictHostKeyChecking=no \
                             "ansible-playbook /opt/scripts/docker-image.yml \
                             -e nexus_username='${NEXUS_USERNAME}' \
                             -e nexus_password='${NEXUS_PASSWORD}'"
@@ -118,7 +120,7 @@ pipeline {
                     sshagent(['ansible-key']) {
                         sh '''
                             ssh -t -t ubuntu@${ANSIBLE_PRIVATE_IP} \
-                            -o strictHostKeyChecking=no \
+                            -o StrictHostKeyChecking=no \
                             "ansible-playbook /opt/scripts/docker-container.yml \
                             --limit stage_env \
                             -e nexus_username='${NEXUS_USERNAME}' \
@@ -131,7 +133,7 @@ pipeline {
 
         stage('Check Website Availability') {
             steps {
-                sh "sleep 90"
+                sh 'sleep 90'
 
                 script {
                     def response = sh(
@@ -162,7 +164,7 @@ pipeline {
 
         stage('Request for Approval') {
             steps {
-                timeout(activity: true, time: 10) {
+                timeout(time: 10, unit: 'MINUTES') {
                     input(
                         message: 'Needs Approval Before Deployment to Production',
                         submitter: 'admin'
@@ -183,7 +185,7 @@ pipeline {
                     sshagent(['ansible-key']) {
                         sh '''
                             ssh -t -t ubuntu@${ANSIBLE_PRIVATE_IP} \
-                            -o strictHostKeyChecking=no \
+                            -o StrictHostKeyChecking=no \
                             "ansible-playbook /opt/scripts/docker-container.yml \
                             --limit prod_env \
                             -e nexus_username='${NEXUS_USERNAME}' \
