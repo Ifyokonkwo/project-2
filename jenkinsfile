@@ -1,13 +1,28 @@
+```groovy
 pipeline {
     agent any
 
     stages {
+
         stage('Checkout') {
             steps {
                 git branch: 'euteam2',
-                url: 'https://github.com/CloudHight/application-assessment-repo.git'
+                    url: 'https://github.com/CloudHight/application-assessment-repo.git'
             }
         }
+
+        stage('Get Ansible Server IP') { 
+            steps { 
+                script { 
+                    env.ANSIBLE_PRIVATE_IP = sh( 
+                        script: 'terraform output -raw ansible_private_ip', 
+                        returnStdout: true 
+                    ).trim() 
+                    echo "Ansible Server IP: ${env.ANSIBLE_PRIVATE_IP}" 
+                } 
+            } 
+        }
+
         stage('Code Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube') {
@@ -15,81 +30,167 @@ pipeline {
                 }
             }
         }
+
         stage('Sonarqube Quality Gate') {
             steps {
                 timeout(2) {
-                   waitForQualityGate abortPipeline: true 
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
+
         stage('Dependency Check') {
             steps {
-                withCredentials([string(credentialsId: 'nvd-key', variable: 'NVD_KEY')]) {
-                    dependencyCheck additionalArguments: "--scan ./ --nvdApiKey $NVD_KEY",
+                withCredentials([
+                    string(
+                        credentialsId: 'nvd-key',
+                        variable: 'NVD_KEY'
+                    )
+                ]) {
+                    dependencyCheck(
+                        additionalArguments: "--scan ./ --nvdApiKey $NVD_KEY",
                         odcInstallation: 'DP-Check'
+                    )
                 }
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+
+                dependencyCheckPublisher(
+                    pattern: '**/dependency-check-report.xml'
+                )
             }
         }
+
         stage('Building Artifact with Maven') {
             steps {
                 sh 'mvn -f pom.xml clean package -DskipTests -Dcheckstyle.skip'
             }
         }
+
         stage('Push Artifact to Nexus Repo') {
             steps {
-                nexusArtifactUploader artifacts: [[artifactId: 'spring-petclinic',
-                classifier: '',
-                file: 'target/spring-petclinic-2.4.2.war',
-                type: 'war']],
-                credentialsId: 'nexus-cred',
-                groupId: 'Petclinic',
-                nexusUrl: 'nexus.ifeanyi-okonkwo-05-training.com',
-                nexusVersion: 'nexus3',
-                protocol: 'https',
-                repository: 'maven-repo',
-                version: '1.0'
+                nexusArtifactUploader(
+                    artifacts: [[
+                        artifactId: 'spring-petclinic',
+                        classifier: '',
+                        file: 'target/spring-petclinic-2.4.2.war',
+                        type: 'war'
+                    ]],
+                    credentialsId: 'nexus-cred',
+                    groupId: 'Petclinic',
+                    nexusUrl: 'nexus.ifeanyi-okonkwo-05-training.com',
+                    nexusVersion: 'nexus3',
+                    protocol: 'https',
+                    repository: 'maven-repo',
+                    version: '1.0'
+                )
             }
         }
+
         stage('Build Docker Image on the Ansible Server') {
             steps {
-                sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-image.yml"'
-                }
-            }
-        }
-        stage('Deploy to Stage Env') {
-            steps {
-                sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit stage_env"'
-                }
-            }
-        }
-        stage('Check Website Availability') {
-            steps {
-                 sh "sleep 90"
-                 sh "curl -s -o /dev/null -w \"%{http_code}\" https://stage.ifeanyi-okonkwo-05-training.com/"
-                script {
-                    def response = sh(script: "curl -s -o /dev/null -w \"%{http_code}\" https://stage.ifeanyi-okonkwo-05-training.com/", returnStdout: true).trim()
-                    if (response == "200") {
-                        slackSend(color: 'good', message: "The stage petclinic java application is up and running with HTTP status code ${response}.", tokenCredentialId: 'slack')
-                    } else {
-                        slackSend(color: 'danger', message: "The stage petclinic java application appears to be down with HTTP status code ${response}.", tokenCredentialId: 'slack')
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-docker-credentials',
+                        usernameVariable: 'NEXUS_USERNAME',
+                        passwordVariable: 'NEXUS_PASSWORD'
+                    )
+                ]) {
+                    sshagent(['ansible-key']) {
+                        sh '''
+                            ssh -t -t ubuntu@${ANSIBLE_PRIVATE_IP} \
+                            -o strictHostKeyChecking=no \
+                            "ansible-playbook /opt/scripts/docker-image.yml \
+                            -e nexus_username='${NEXUS_USERNAME}' \
+                            -e nexus_password='${NEXUS_PASSWORD}'"
+                        '''
                     }
                 }
             }
         }
-        stage('Request for Approval') {
+
+        stage('Deploy to Stage Env') {
             steps {
-                timeout(activity: true, time: 10) {
-                    input message: 'Needs Approval Before Deployment to Production', submitter: 'admin'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-docker-credentials',
+                        usernameVariable: 'NEXUS_USERNAME',
+                        passwordVariable: 'NEXUS_PASSWORD'
+                    )
+                ]) {
+                    sshagent(['ansible-key']) {
+                        sh '''
+                            ssh -t -t ubuntu@${ANSIBLE_PRIVATE_IP} \
+                            -o strictHostKeyChecking=no \
+                            "ansible-playbook /opt/scripts/docker-container.yml \
+                            --limit stage_env \
+                            -e nexus_username='${NEXUS_USERNAME}' \
+                            -e nexus_password='${NEXUS_PASSWORD}'"
+                        '''
+                    }
                 }
             }
         }
+
+        stage('Check Website Availability') {
+            steps {
+                sh "sleep 90"
+
+                script {
+                    def response = sh(
+                        script: 'curl -s -o /dev/null -w "%{http_code}" https://stage.ifeanyi-okonkwo-05-training.com/',
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Stage website HTTP status code: ${response}"
+
+                    if (response == "200") {
+                        slackSend(
+                            color: 'good',
+                            message: "The stage petclinic java application is up and running with HTTP status code ${response}.",
+                            tokenCredentialId: 'slack'
+                        )
+                    } else {
+                        slackSend(
+                            color: 'danger',
+                            message: "The stage petclinic java application appears to be down with HTTP status code ${response}.",
+                            tokenCredentialId: 'slack'
+                        )
+
+                        error("Stage application health check failed with HTTP status code ${response}.")
+                    }
+                }
+            }
+        }
+
+        stage('Request for Approval') {
+            steps {
+                timeout(activity: true, time: 10) {
+                    input(
+                        message: 'Needs Approval Before Deployment to Production',
+                        submitter: 'admin'
+                    )
+                }
+            }
+        }
+
         stage('Deploy to Production Env') {
             steps {
-                sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit prod_env"'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-docker-credentials',
+                        usernameVariable: 'NEXUS_USERNAME',
+                        passwordVariable: 'NEXUS_PASSWORD'
+                    )
+                ]) {
+                    sshagent(['ansible-key']) {
+                        sh '''
+                            ssh -t -t ubuntu@${ANSIBLE_PRIVATE_IP} \
+                            -o strictHostKeyChecking=no \
+                            "ansible-playbook /opt/scripts/docker-container.yml \
+                            --limit prod_env \
+                            -e nexus_username='${NEXUS_USERNAME}' \
+                            -e nexus_password='${NEXUS_PASSWORD}'"
+                        '''
+                    }
                 }
             }
         }

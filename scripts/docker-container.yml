@@ -1,56 +1,136 @@
 ---
 - name: Deploy container from Nexus Docker registry
   hosts: all
-  gather_facts: no
-  
+  gather_facts: false
+  become: true
+
   vars:
+    # Docker registry endpoint
     nexus_docker_registry: "https://nexus.ifeanyi-okonkwo-05-training.com/repository/docker-repo"  # e.g., "nexus.example.com:8083"
-    nexus_username: "admin"          # Replace with Nexus username
-    nexus_password: "admin123" 
-    image_name: "petclinic"  # e.g., "myapp"
-    image_tag: "1.0.0"  # or specific version
+
+    # Nexus credentials
+    #nexus_username: "admin"
+    #nexus_password: "YOUR_NEXUS_PASSWORD"
+
+    # Application
+    image_name: "petclinic"
+    image_tag: "1.0.0"
     container_name: "petclinic-container"
+
+    # Full Docker image location
     nexus_docker_host: "nexus.ifeanyi-okonkwo-05-training.com/docker-repo"
+
+    # host:container
     container_ports:
-      - "8080:8080"  # host:container port mapping
-    
+      - "8080:8080"
+
   tasks:
+
+    # ---------------------------------------------------------
+    # 1. Install Docker if it is not already installed
+    # ---------------------------------------------------------
+    - name: Install Docker
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+        update_cache: true
+
+    # ---------------------------------------------------------
+    # 2. Make sure Docker is running
+    # ---------------------------------------------------------
+    - name: Start and enable Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    # ---------------------------------------------------------
+    # 3. Add ubuntu user to Docker group
+    # ---------------------------------------------------------
+    - name: Add ubuntu user to docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    # ---------------------------------------------------------
+    # 4. Verify Docker is available
+    # ---------------------------------------------------------
+    - name: Check Docker version
+      ansible.builtin.command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Display Docker version
+      ansible.builtin.debug:
+        msg: "{{ docker_version.stdout }}"
+
+    # ---------------------------------------------------------
+    # 5. Login to Nexus Docker registry
+    # ---------------------------------------------------------
     - name: Login to Nexus Docker registry
       community.docker.docker_login:
         registry_url: "{{ nexus_docker_registry }}"
         username: "{{ nexus_username }}"
         password: "{{ nexus_password }}"
-        reauthorize: yes
-        
+        reauthorize: true
+
+    # ---------------------------------------------------------
+    # 6. Stop existing container
+    # ---------------------------------------------------------
     - name: Stop existing container if running
       community.docker.docker_container:
         name: "{{ container_name }}"
         state: stopped
-      ignore_errors: yes
-      
+      ignore_errors: true
+
+    # ---------------------------------------------------------
+    # 7. Remove existing container
+    # ---------------------------------------------------------
     - name: Remove stopped container
       community.docker.docker_container:
         name: "{{ container_name }}"
         state: absent
-      ignore_errors: yes
-      
+      ignore_errors: true
+
+    # ---------------------------------------------------------
+    # 8. Remove existing image
+    # ---------------------------------------------------------
     - name: Remove existing image
       community.docker.docker_image:
         name: "{{ nexus_docker_host }}/{{ image_name }}:{{ image_tag }}"
         state: absent
-      ignore_errors: yes
-      
+      ignore_errors: true
+
+    # ---------------------------------------------------------
+    # 9. Pull new image from Nexus
+    # ---------------------------------------------------------
     - name: Pull new image from Nexus
       community.docker.docker_image:
         name: "{{ nexus_docker_host }}/{{ image_name }}:{{ image_tag }}"
         source: pull
-        force_source: yes
-        
+        force_source: true
+
+    # ---------------------------------------------------------
+    # 10. Create and start new container
+    # ---------------------------------------------------------
     - name: Create and start new container
       community.docker.docker_container:
         name: "{{ container_name }}"
         image: "{{ nexus_docker_host }}/{{ image_name }}:{{ image_tag }}"
         state: started
         restart_policy: unless-stopped
-        ports: "{{ container_ports | default(omit) }}"
-        detach: yes
+        ports: "{{ container_ports }}"
+        detach: true
+
+    # ---------------------------------------------------------
+    # 11. Verify container is running
+    # ---------------------------------------------------------
+    - name: Check container status
+      community.docker.docker_container_info:
+        name: "{{ container_name }}"
+      register: container_info
+
+    - name: Display container status
+      ansible.builtin.debug:
+        msg: "Container {{ container_name }} is {{ container_info.container.State.Status }}"
