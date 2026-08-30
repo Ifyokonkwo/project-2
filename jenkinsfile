@@ -42,21 +42,11 @@ pipeline {
 
         stage('Dependency Check') {
             steps {
-                withCredentials([
-                    string(
-                        credentialsId: 'nvd-key',
-                        variable: 'NVD_KEY'
-                    )
-                ]) {
-                    dependencyCheck(
-                        additionalArguments: "--scan ./ --nvdApiKey $NVD_KEY",
+                withCredentials([string(credentialsId: 'nvd-key', variable: 'NVD_KEY')]) {
+                    dependencyCheck additionalArguments: "--scan ./ --nvdApiKey $NVD_KEY",
                         odcInstallation: 'DP-Check'
-                    )
                 }
-
-                dependencyCheckPublisher(
-                    pattern: '**/dependency-check-report.xml'
-                )
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             }
         }
 
