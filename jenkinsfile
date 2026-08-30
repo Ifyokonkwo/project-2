@@ -1,13 +1,66 @@
 pipeline {
     agent any
-
+    
+    parameters {
+        string(
+            name: 'PROJECT_NAME',
+            defaultValue: 'proj',
+            description: 'Project name (e.g., proj, dev, staging)'
+        )
+    }
+    environment {
+        AWS_REGION = sh(
+            script: "curl -s http://169.254.169.254/latest/meta-data/placement/region || echo 'us-east-1'",
+            returnStdout: true
+        ).trim()
+        
+        // Dynamically build the server names
+        BASTION_NAME = "Name=${params.PROJECT_NAME}-bastion-server"
+        ANSIBLE_NAME = "Name=${params.PROJECT_NAME}-ansible"
+    }
     stages {
+        stage('Get Dynamic IPs') {
+            steps {
+                script {
+                    echo "Using AWS Region: ${env.AWS_REGION}"
+                    
+                    // Automatically fetch bastion public IP from AWS
+                    env.BASTION_IP = sh(
+                        script: """
+                            aws ec2 describe-instances \\
+                                --filters "Name=tag:Name,Values=${BASTION_TAG}" "Name=instance-state-name,Values=running" \\
+                                --query 'Reservations[0].Instances[0].PublicIpAddress' \\
+                                --output text \\
+                                --region ${AWS_REGION}
+                        """,
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Automatically fetch ansible private IP from AWS
+                    env.ANSIBLE_IP = sh(
+                        script: """
+                            aws ec2 describe-instances \\
+                                --filters "Name=tag:Name,Values=${ANSIBLE_TAG}" "Name=instance-state-name,Values=running" \\
+                                --query 'Reservations[0].Instances[0].PrivateIpAddress' \\
+                                --output text \\
+                                --region ${AWS_REGION}
+                        """,
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "Bastion IP: ${env.BASTION_IP}"
+                    echo "Ansible IP: ${env.ANSIBLE_IP}"
+                }
+            }
+        }
+        
         stage('Checkout') {
             steps {
                 git branch: 'euteam2',
                 url: 'https://github.com/CloudHight/application-assessment-repo.git'
             }
         }
+        
         stage('Code Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube') {
@@ -15,6 +68,7 @@ pipeline {
                 }
             }
         }
+        
         stage('Sonarqube Quality Gate') {
             steps {
                 timeout(2) {
@@ -22,6 +76,7 @@ pipeline {
                 }
             }
         }
+        
         stage('Dependency Check') {
             steps {
                 withCredentials([string(credentialsId: 'nvd-key', variable: 'NVD_KEY')]) {
@@ -31,11 +86,13 @@ pipeline {
                 dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             }
         }
+        
         stage('Building Artifact with Maven') {
             steps {
                 sh 'mvn -f pom.xml clean package -DskipTests -Dcheckstyle.skip'
             }
         }
+        
         stage('Push Artifact to Nexus Repo') {
             steps {
                 nexusArtifactUploader artifacts: [[artifactId: 'spring-petclinic',
@@ -51,20 +108,35 @@ pipeline {
                 version: '1.0'
             }
         }
+        
         stage('Build Docker Image on the Ansible Server') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-image.yml"'
+                    sh '''
+                        ssh -t -t -o StrictHostKeyChecking=no \\
+                            -o ProxyJump=ubuntu@${BASTION_IP} \\
+                            -o ForwardAgent=yes \\
+                            ubuntu@${ANSIBLE_IP} \\
+                            "ansible-playbook /opt/scripts/docker-image.yml"
+                    '''
                 }
             }
         }
+        
         stage('Deploy to Stage Env') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit stage_env"'
+                    sh '''
+                        ssh -t -t -o StrictHostKeyChecking=no \\
+                            -o ProxyJump=ubuntu@${BASTION_IP} \\
+                            -o ForwardAgent=yes \\
+                            ubuntu@${ANSIBLE_IP} \\
+                            "ansible-playbook /opt/scripts/docker-container.yml --limit stage_env"
+                    '''
                 }
             }
         }
+        
         stage('Check Website Availability') {
             steps {
                  sh "sleep 90"
@@ -79,6 +151,7 @@ pipeline {
                 }
             }
         }
+        
         stage('Request for Approval') {
             steps {
                 timeout(activity: true, time: 10) {
@@ -86,10 +159,17 @@ pipeline {
                 }
             }
         }
+        
         stage('Deploy to Production Env') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit prod_env"'
+                    sh '''
+                        ssh -t -t -o StrictHostKeyChecking=no \\
+                            -o ProxyJump=ubuntu@${BASTION_IP} \\
+                            -o ForwardAgent=yes \\
+                            ubuntu@${ANSIBLE_IP} \\
+                            "ansible-playbook /opt/scripts/docker-container.yml --limit prod_env"
+                    '''
                 }
             }
         }
