@@ -54,14 +54,14 @@ pipeline {
         stage('Build Docker Image on the Ansible Server') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-image.yml"'
+                    sh 'ssh -t -t ubuntu@10.0.1.90 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-image.yml"'
                 }
             }
         }
         stage('Deploy to Stage Env') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit stage_env"'
+                    sh 'ssh -t -t ubuntu@10.0.1.90 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit stage_env"'
                 }
             }
         }
@@ -89,7 +89,7 @@ pipeline {
         stage('Deploy to Production Env') {
             steps {
                 sshagent(['ansible-key']) {
-                    sh 'ssh -t -t ubuntu@10.0.1.142 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit prod_env"'
+                    sh 'ssh -t -t ubuntu@10.0.1.90 -o strictHostKeyChecking=no "ansible-playbook /opt/scripts/docker-container.yml --limit prod_env"'
                 }
             }
         }
