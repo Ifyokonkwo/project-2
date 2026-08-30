@@ -6,7 +6,7 @@
   vars:
     nexus_docker_registry: "https://nexus.ifeanyi-okonkwo-05-training.com/repository/docker-repo"  # e.g., "nexus.example.com:8083"
     nexus_username: "admin"          # Replace with Nexus username
-    nexus_password: "admin123" 
+    nexus_password: "Back2Base@26" 
     image_name: "petclinic"  # e.g., "myapp"
     image_tag: "1.0.0"  # or specific version
     container_name: "petclinic-container"
